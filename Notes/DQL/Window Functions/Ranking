@@ -1,0 +1,954 @@
+
+1. Definition
+
+`RANK()` assigns a rank to each row based on the ordering of values.
+
+If multiple rows have the same value, they receive the same rank.
+
+After a tie, `RANK()` skips the next rank(s).
+
+> Key rule: Same value → Same rank → Gaps after ties.
+
+-----------------------------------------------------------------------------------------------------------
+
+2. Syntax
+
+
+RANK() OVER (
+    PARTITION BY column
+    ORDER BY column DESC
+)
+
+
+- `PARTITION BY` → divides rows into groups. Optional.
+- `ORDER BY` → determines the ranking order.
+- `RANK()` → assigns ranks according to that ordering.
+
+-----------------------------------------------------------------------------------------------------------
+
+3. Basic Example
+
+Employee data:
+
+|Employee|Salary|
+|---|---|
+|Alice|100000|
+|Bob|90000|
+|Charlie|90000|
+|David|80000|
+
+Query:
+
+
+SELECT
+    employee,
+    salary,
+    RANK() OVER (
+        ORDER BY salary DESC
+    ) AS salary_rank
+FROM employees;
+
+
+Result:
+
+|Employee|Salary|Rank|
+|---|---|---|
+|Alice|100000|1|
+|Bob|90000|2|
+|Charlie|90000|2|
+|David|80000|4|
+
+Notice:
+
+
+100000 → 1
+ 90000 → 2
+ 90000 → 2    ← Tie
+ 80000 → 4    ← 3 is skipped
+
+
+Because Bob and Charlie both occupy rank `2`, the next row receives rank `4`.
+
+-----------------------------------------------------------------------------------------------------------
+
+4. `RANK()` with `PARTITION BY`
+
+Suppose employees belong to different departments.
+
+
+SELECT
+    employee,
+    department,
+    salary,
+    RANK() OVER (
+        PARTITION BY department
+        ORDER BY salary DESC
+    ) AS salary_rank
+FROM employees;
+
+
+Conceptually:
+
+
+IT
+Alice      100000 → 1
+Bob         90000 → 2
+Charlie     90000 → 2
+David       80000 → 4
+
+HR
+Priya       95000 → 1
+John        85000 → 2
+Sam         85000 → 2
+
+
+`PARTITION BY department` means:
+
+> Rank employees independently within each department.
+
+The rank restarts at `1` for each department.
+
+-----------------------------------------------------------------------------------------------------------
+
+5. Practical Use Cases / Patterns
+
+Pattern 1 — Ranking where ties must be equal
+
+Example:
+
+> Rank salespeople by revenue within each region.
+
+
+RANK() OVER (
+    PARTITION BY region
+    ORDER BY revenue DESC
+)
+
+
+If:
+
+
+A → ₹10 lakh
+B → ₹9 lakh
+C → ₹9 lakh
+D → ₹7 lakh
+
+
+Result:
+
+
+A → 1
+B → 2
+C → 2
+D → 4
+
+
+Useful for:
+
+- Employee performance rankings
+- Sales leaderboards
+- Vendor rankings
+- Product performance rankings
+- Competition standings
+
+Use `RANK()` when equal performance should mean equal position.
+
+-----------------------------------------------------------------------------------------------------------
+
+Pattern 2 — Nth-highest ranking with ties
+
+Question:
+
+> Find all employees ranked second by salary.
+
+
+WITH ranked AS (
+    SELECT *,
+        RANK() OVER (
+            ORDER BY salary DESC
+        ) AS rnk
+    FROM employees
+)
+SELECT *
+FROM ranked
+WHERE rnk = 2;
+
+
+If salaries are:
+
+
+Alice      100000 → 1
+Bob         90000 → 2
+Charlie     90000 → 2
+David       80000 → 4
+
+
+Both Bob and Charlie are returned.
+
+This is useful when the business meaning is:
+
+> “Return everyone who occupies position #2.”
+
+Important: `RANK()` is not always the right choice for the Nth-highest distinct value, because rank gaps can cause a requested rank not to exist. `DENSE_RANK()` is often better for that pattern.
+
+-----------------------------------------------------------------------------------------------------------
+
+Pattern 3 — Top ranks per group including ties
+
+Example:
+
+> Find employees in the top 3 rank positions of each department.
+
+
+WITH ranked AS (
+    SELECT *,
+        RANK() OVER (
+            PARTITION BY department
+            ORDER BY salary DESC
+        ) AS rnk
+    FROM employees
+)
+SELECT *
+FROM ranked
+WHERE rnk <= 3;
+
+
+This differs from `ROW_NUMBER()`.
+
+`ROW_NUMBER() <= 3` guarantees at most 3 rows per department.
+
+`RANK() <= 3` can return more than 3 rows if employees tie.
+
+For example:
+
+
+A  100 → Rank 1
+B   90 → Rank 2
+C   90 → Rank 2
+D   90 → Rank 2
+E   80 → Rank 5
+
+
+Filtering:
+
+
+WHERE rnk <= 3
+
+
+returns:
+
+
+A
+B
+C
+D
+
+
+So 4 rows are returned even though we asked for the top 3 rank positions.
+
+-----------------------------------------------------------------------------------------------------------
+
+6. `ROW_NUMBER()` vs `RANK()`
+
+This is the most important comparison so far.
+
+Given:
+
+
+Salary       ROW_NUMBER()       RANK()
+
+100000            1               1
+ 90000            2               2
+ 90000            3               2
+ 80000            4               4
+
+
+`ROW_NUMBER()`
+
+
+1, 2, 3, 4
+
+
+Every row gets a unique number, even when values tie.
+
+Best for:
+
+- Deduplication
+- Latest record per key
+- Exactly Top-N rows per group
+- CDC/event cleanup
+
+`RANK()`
+
+
+1, 2, 2, 4
+
+
+Equal values receive the same rank, with gaps afterward.
+
+Best for:
+
+- Competition-style rankings
+- Leaderboards
+- Performance standings
+- Business rankings where ties should share a position
+
+-----------------------------------------------------------------------------------------------------------
+
+7. Important Pitfall
+
+Do not automatically use `RANK()` just because a question says “Top N.”
+
+Ask what the business actually wants.
+
+
+"Give exactly 3 products per category"
+             ↓
+ROW_NUMBER()
+
+"Give everyone in the top 3 rank positions,
+including ties"
+             ↓
+RANK()
+
+
+The choice changes the number of rows returned.
+
+-----------------------------------------------------------------------------------------------------------
+
+8. Note to Remember
+
+> `RANK()` assigns the same rank to ties and leaves gaps after ties.
+
+Mental shortcut:
+
+
+ROW_NUMBER → 1, 2, 3, 4
+RANK       → 1, 2, 2, 4
+                         ↑
+                       gap
+
+
+`RANK()` is complete at the conceptual level. The natural next concept is `DENSE_RANK()`, where ties still receive the same rank but no ranks are skipped: `1, 2, 2, 3`
+
+
+
+The complete scope is:
+
+- Purpose: assign ranking based on `ORDER BY`.
+- Ties: same values → same rank.
+- Gap behavior: ranks are skipped after ties: `1, 2, 2, 4`.
+- `PARTITION BY`: restart ranking independently for each group.
+- Main practical uses: leaderboards/performance rankings, ranking within groups, Nth-position queries, and Top-N rank positions while preserving ties.
+- Main pitfall: `RANK() <= N` may return more than N rows because of ties, and some rank numbers may not exist because of gaps.
+- Key difference from `ROW_NUMBER()`: `ROW_NUMBER()` always gives unique numbers; `RANK()` preserves ties.
+
+
+
+
+
+
+
+`DENSE_RANK()` — Ranking Window Function
+
+1. Definition
+
+`DENSE_RANK()` assigns a rank to each row based on the specified ordering.
+
+When multiple rows have the same value:
+
+- They receive the same rank.
+- Unlike `RANK()`, the next rank is not skipped.
+
+> Key rule: Same value → Same rank → No gaps.
+
+Example:
+
+
+Values       DENSE_RANK
+
+100000           1
+ 90000           2
+ 90000           2   ← tie
+ 80000           3   ← no gap
+
+
+-----------------------------------------------------------------------------------------------------------
+
+2. Syntax
+
+
+DENSE_RANK() OVER (
+    PARTITION BY column
+    ORDER BY column DESC
+)
+
+
+The parts mean:
+
+
+PARTITION BY → Which groups should be ranked separately?
+ORDER BY     → What determines the ranking?
+DENSE_RANK   → Assign ranks without gaps after ties.
+
+
+`PARTITION BY` is optional.
+
+-----------------------------------------------------------------------------------------------------------
+
+3. Basic Example
+
+Suppose:
+
+|Employee|Salary|
+|---|---|
+|Alice|100000|
+|Bob|90000|
+|Charlie|90000|
+|David|80000|
+|Emma|70000|
+
+Query:
+
+
+SELECT
+    employee,
+    salary,
+    DENSE_RANK() OVER (
+        ORDER BY salary DESC
+    ) AS salary_rank
+FROM employees;
+
+
+Result:
+
+|Employee|Salary|Rank|
+|---|---|---|
+|Alice|100000|1|
+|Bob|90000|2|
+|Charlie|90000|2|
+|David|80000|3|
+|Emma|70000|4|
+
+Internally:
+
+
+100000 → Rank 1
+
+ 90000 → Rank 2
+ 90000 → Rank 2     ← tie
+
+ 80000 → Rank 3     ← continues normally
+
+ 70000 → Rank 4
+
+
+This is the defining behavior of `DENSE_RANK()`:
+
+> Ties share a rank, but they do not create gaps.
+
+-----------------------------------------------------------------------------------------------------------
+
+4. `DENSE_RANK()` with `PARTITION BY`
+
+Suppose:
+
+|Employee|Department|Salary|
+|---|---|---|
+|Alice|IT|100000|
+|Bob|IT|90000|
+|Charlie|IT|90000|
+|David|IT|80000|
+|Priya|HR|95000|
+|John|HR|85000|
+
+Query:
+
+
+SELECT
+    employee,
+    department,
+    salary,
+    DENSE_RANK() OVER (
+        PARTITION BY department
+        ORDER BY salary DESC
+    ) AS salary_rank
+FROM employees;
+
+
+Conceptually:
+
+
+IT:
+
+Alice      100000 → 1
+Bob         90000 → 2
+Charlie     90000 → 2
+David       80000 → 3
+
+
+HR:
+
+Priya       95000 → 1
+John        85000 → 2
+
+
+Because of:
+
+
+PARTITION BY department
+
+
+ranking restarts for every department.
+
+-----------------------------------------------------------------------------------------------------------
+
+5. Practical Use Case 1 — Nth Highest Distinct Value
+
+This is one of the most important practical uses of `DENSE_RANK()`.
+
+Suppose salaries are:
+
+
+100000
+ 90000
+ 90000
+ 80000
+ 70000
+
+
+The distinct salaries are:
+
+
+1st highest → 100000
+2nd highest →  90000
+3rd highest →  80000
+4th highest →  70000
+
+
+`DENSE_RANK()` produces exactly that:
+
+
+Salary       DENSE_RANK
+
+100000            1
+ 90000            2
+ 90000            2
+ 80000            3
+ 70000            4
+
+
+So:
+
+> Find employees earning the 3rd highest distinct salary.
+
+
+WITH ranked AS (
+    SELECT
+        employee,
+        salary,
+        DENSE_RANK() OVER (
+            ORDER BY salary DESC
+        ) AS rnk
+    FROM employees
+)
+SELECT *
+FROM ranked
+WHERE rnk = 3;
+
+
+Returns:
+
+
+David → 80000
+
+
+Data/SQL Pattern
+
+Whenever you hear:
+
+> “Nth highest distinct value”
+
+Think:
+
+
+DENSE_RANK()
+
+
+Examples:
+
+
+2nd highest distinct salary
+3rd highest product revenue
+5th highest transaction amount
+Top 10 distinct scores
+
+
+-----------------------------------------------------------------------------------------------------------
+
+6. Why `DENSE_RANK()` instead of `RANK()` here?
+
+Consider:
+
+
+Salary       RANK       DENSE_RANK
+
+100000         1             1
+ 90000         2             2
+ 90000         2             2
+ 80000         4             3
+ 70000         5             4
+
+
+Suppose we ask:
+
+> What is the 3rd highest distinct salary?
+
+With:
+
+
+RANK()
+
+
+there is no rank 3.
+
+Because:
+
+
+1, 2, 2, 4
+
+
+But `DENSE_RANK()` gives:
+
+
+1, 2, 2, 3
+
+
+Therefore:
+
+
+WHERE dense_rank = 3
+
+
+correctly returns `80000`.
+
+Important pattern
+
+
+Position including gaps
+        ↓
+RANK()
+
+Nth DISTINCT value
+        ↓
+DENSE_RANK()
+
+
+-----------------------------------------------------------------------------------------------------------
+
+7. Practical Use Case 2 — Product Performance Tiers
+
+Suppose products have revenue:
+
+|Product|Revenue|
+|---|---|
+|Laptop|10M|
+|Phone|8M|
+|Tablet|8M|
+|Watch|6M|
+|Earbuds|5M|
+
+You want products grouped by revenue level.
+
+
+SELECT
+    product,
+    revenue,
+    DENSE_RANK() OVER (
+        ORDER BY revenue DESC
+    ) AS revenue_tier
+FROM product_sales;
+
+
+Result:
+
+
+Laptop    10M → Tier 1
+
+Phone      8M → Tier 2
+Tablet     8M → Tier 2
+
+Watch      6M → Tier 3
+
+Earbuds    5M → Tier 4
+
+
+Here we're effectively ranking distinct revenue levels.
+
+Practical uses:
+
+
+Revenue tiers
+Performance tiers
+Salary bands based on values
+Customer spending levels
+Product popularity levels
+Vendor performance levels
+
+
+-----------------------------------------------------------------------------------------------------------
+
+8. Practical Use Case 3 — Top N Distinct Values Per Group
+
+Suppose the business asks:
+
+> Find products belonging to the top 3 distinct revenue levels within each category.
+
+Use:
+
+
+WITH ranked AS (
+    SELECT *,
+        DENSE_RANK() OVER (
+            PARTITION BY category
+            ORDER BY revenue DESC
+        ) AS rnk
+    FROM products
+)
+SELECT *
+FROM ranked
+WHERE rnk <= 3;
+
+
+Example:
+
+
+Electronics:
+
+Laptop A    10M → 1
+
+Phone A      8M → 2
+Phone B      8M → 2
+
+Tablet       6M → 3
+
+Watch        4M → 4
+
+
+Filtering:
+
+
+WHERE rnk <= 3
+
+
+returns:
+
+
+Laptop A
+Phone A
+Phone B
+Tablet
+
+
+Notice that more than 3 rows can be returned.
+
+Why?
+
+Because `DENSE_RANK()` selects the:
+
+
+Top 3 distinct revenue levels
+
+
+not:
+
+
+Exactly 3 rows
+
+
+This distinction is important.
+
+-----------------------------------------------------------------------------------------------------------
+
+9. Practical Use Case 4 — Ranking Distinct Business Levels
+
+Imagine customers:
+
+
+Customer     Spending
+
+A            100000
+B             80000
+C             80000
+D             50000
+E             30000
+
+
+Using:
+
+
+DENSE_RANK() OVER (
+    ORDER BY spending DESC
+)
+
+
+gives:
+
+
+A → 1
+B → 2
+C → 2
+D → 3
+E → 4
+
+
+This is useful when you care about distinct levels of a metric, rather than physical row positions.
+
+For example:
+
+
+Distinct salary levels
+Distinct revenue levels
+Distinct scores
+Distinct transaction amounts
+Distinct performance levels
+
+
+-----------------------------------------------------------------------------------------------------------
+
+10. The Three Ranking Functions Together
+
+This is the most important note to remember.
+
+Suppose:
+
+
+Salary:
+
+100000
+ 90000
+ 90000
+ 80000
+
+
+Results:
+
+|Salary|`ROW_NUMBER()`|`RANK()`|`DENSE_RANK()`|
+|---|---|---|---|
+|100000|1|1|1|
+|90000|2|2|2|
+|90000|3|2|2|
+|80000|4|4|3|
+
+Mental model:
+
+
+ROW_NUMBER
+1, 2, 3, 4
+→ Every row gets unique number
+
+
+RANK
+1, 2, 2, 4
+→ Ties share rank
+→ Gaps after ties
+
+
+DENSE_RANK
+1, 2, 2, 3
+→ Ties share rank
+→ NO gaps
+
+
+-----------------------------------------------------------------------------------------------------------
+
+11. Which One Should You Use?
+
+The easiest decision rule:
+
+|Requirement|Function|
+|---|---|
+|Exactly one unique position per row|`ROW_NUMBER()`|
+|Deduplication|`ROW_NUMBER()`|
+|Latest record per key|`ROW_NUMBER()`|
+|Exactly Top N rows per group|`ROW_NUMBER()`|
+|Competition-style ranking with ties|`RANK()`|
+|Ties share position + skipped positions matter|`RANK()`|
+|Nth highest distinct value|`DENSE_RANK()`|
+|Rank distinct value levels without gaps|`DENSE_RANK()`|
+
+Interview shortcut
+
+If asked:
+
+> “Find the 3rd highest distinct salary.”
+
+Think:
+
+
+DENSE_RANK
+
+
+If asked:
+
+> “Rank employees like a competition.”
+
+Think:
+
+
+RANK
+
+
+If asked:
+
+> “Keep exactly one/latest record per customer.”
+
+Think:
+
+
+ROW_NUMBER
+
+
+-----------------------------------------------------------------------------------------------------------
+
+12. Important Pitfall
+
+`DENSE_RANK() <= 3` does not mean exactly 3 rows.
+
+If:
+
+
+100 → rank 1
+ 90 → rank 2
+ 90 → rank 2
+ 90 → rank 2
+ 80 → rank 3
+
+
+then:
+
+
+WHERE rnk <= 3
+
+
+returns 5 rows, because it means:
+
+> Return all rows belonging to the top 3 distinct ranked values.
+
+If you need exactly 3 rows, normally use `ROW_NUMBER()`.
+
+-----------------------------------------------------------------------------------------------------------
+
+Note to remember
+
+> `DENSE_RANK()` = same values get the same rank, and ranking continues without gaps.
+
+
+ROW_NUMBER → 1, 2, 3, 4
+RANK       → 1, 2, 2, 4
+DENSE_RANK → 1, 2, 2, 3
+
+
+The major practical pattern unique to `DENSE_RANK()` is Nth-highest distinct value.
+
+Next in the ranking-function family is `NTILE()`. It is different: instead of ranking individual values, it divides ordered rows into N buckets/groups, which is useful for quartiles, deciles, customer segmentation, and percentile-style analysis.
